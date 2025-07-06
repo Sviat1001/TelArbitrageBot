@@ -161,37 +161,18 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # You will need a function to actually send the arbitrage alerts periodically.
 # This is a placeholder; you'll integrate your find_arbitrage_opportunities here.
 async def send_arbitrage_alerts(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Function to find and send arbitrage opportunities to subscribed users.
-    This will be scheduled by the JobQueue.
-    """
     if not data_ready:
         logging.info("Exchange data not ready yet, skipping arbitrage check.")
         return
+
     logging.info("Checking for arbitrage opportunities...")
     opportunities = find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.005)
     if not opportunities:
-        message = "No new arbitrage opportunities at the moment."
-    new_opportunities = []
-
-    for opp in opportunities:
-        key = opportunity_key(opp)
-        if key in sent_opportunities:
-            continue
-        sent_opportunities.add(key)
-        new_opportunities.append(opp)
-
-    if new_opportunities:
-        message = "🔥 New Arbitrage Opportunities found!\n\n"
-        for opp in new_opportunities:
-            message += (
-                f"{opp['symbol']} | Buy {opp['buy_exchange']} at {opp['buy_price']:.6f} | "
-                f"Sell {opp['sell_exchange']} at {opp['sell_price']:.6f} | "
-                f"Profit: {opp['profit_pct']:.2f}%\n"
-            )
+        logging.info("No new arbitrage opportunities at the moment.")
+        return
 
     for user_id in list(subscribed_users):
-        # Initialize per-user set if not exists
+        # Initialize this user's sent_opportunities set if needed
         if user_id not in sent_opportunities:
             sent_opportunities[user_id] = set()
 
@@ -215,6 +196,7 @@ async def send_arbitrage_alerts(context: ContextTypes.DEFAULT_TYPE):
                 logging.info(f"Sent arbitrage alert to user {user_id}")
             except Exception as e:
                 logging.error(f"Failed to send message to user {user_id}: {e}")
+
 
 
 if __name__ == '__main__':
