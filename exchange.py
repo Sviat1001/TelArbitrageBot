@@ -67,20 +67,16 @@ def get_common_symbols(exchange_objects):
 
 
 exchange_names = ['binance', 'kucoin', 'kraken', 'bybit']
-def load(exchange_names):
+def load_markets(exchange_names):
     exchange_objects = load_exchanges(exchange_names)
     common_symbols = get_common_symbols(exchange_objects)
 
     # Print results
     for name, symbols in common_symbols.items():
-        print(f"✅ {name} has {len(symbols)} common spot symbols: {symbols[:5]} ...")  # Show only first 5 for brevity
+        print(f"✅ {name} has {len(symbols)} common spot symbols")  # Show only first 5 for brevity
     return exchange_objects, common_symbols
 
-exchange_objects, common_symbols = load(exchange_names)
-
-
-
-def fetch_exchange_tickers(name, exchange, batch_size=500, timeout=10):
+def fetch_exchange_tickers(name, exchange, common_symbols, batch_size=500, timeout=10):
     start_time = time.monotonic()
     with print_lock:
         print(f"  - Starting fetch for {name}...")
@@ -97,7 +93,6 @@ def fetch_exchange_tickers(name, exchange, batch_size=500, timeout=10):
         return name, tickers
 
     symbols = common_symbols[name]
-
 
     if name == 'kucoin':
         try:
@@ -132,12 +127,12 @@ def fetch_exchange_tickers(name, exchange, batch_size=500, timeout=10):
 
     return finish()
 
-def get_all_tickers(exchange_objects, batch_size=500):
+def get_all_tickers(exchange_objects, common_symbols, batch_size=500):
     all_tickers = {}
 
     with ThreadPoolExecutor() as executor:
         futures = {
-            executor.submit(fetch_exchange_tickers, name, exchange, batch_size): name
+            executor.submit(fetch_exchange_tickers, name, exchange, common_symbols, batch_size): name
             for name, exchange in exchange_objects.items()
         }
 
@@ -173,7 +168,7 @@ def write_tickers_to_file(tickers, filename="tickers_output.txt"):
 
 
 
-def find_arbitrage_opportunities(common_symbols, threshold=0.05):
+def find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.05):
     """
     Find arbitrage opportunities across exchanges for common symbols.
 
@@ -185,7 +180,7 @@ def find_arbitrage_opportunities(common_symbols, threshold=0.05):
     Returns:
         list of dicts: each dict contains details of arbitrage opportunity.
     """
-    tickers = get_all_tickers(exchange_objects)
+    tickers = get_all_tickers(exchange_objects, common_symbols)
 
     write_tickers_to_file(tickers)
     checked = set()  # to avoid checking pairs twice, store (exchange1, exchange2, symbol)
@@ -254,14 +249,3 @@ def find_arbitrage_opportunities(common_symbols, threshold=0.05):
                     })
 
     return opportunities
-
-opportunities = find_arbitrage_opportunities(common_symbols, threshold=0.05)
-
-if opportunities:
-    print(f"\n🔥 Arbitrage Opportunities (>{0.5}%) found:")
-    for opp in opportunities:
-        print(f"{opp['symbol']} | Buy {opp['buy_exchange']} at {opp['buy_price']:.6f} | "
-              f"Sell {opp['sell_exchange']} at {opp['sell_price']:.6f} | "
-              f"Profit: {opp['profit_pct']:.2f}%")
-else:
-    print("No arbitrage opportunities found.")
