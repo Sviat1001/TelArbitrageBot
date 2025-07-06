@@ -48,7 +48,7 @@ subscribed_users = set()
 subscribed_users = load_subscribers()
 logging.info(f"Loaded {len(subscribed_users)} subscribers from file.")
 
-sent_opportunities = set()
+sent_opportunities = {}
 
 def opportunity_key(opp):
     return f"{opp['symbol']}:{opp['buy_exchange']}:{opp['sell_exchange']}"
@@ -62,8 +62,9 @@ data_ready = True
 logging.info("Exchange data loaded.")
 
 async def clear_sent_opportunities(context: ContextTypes.DEFAULT_TYPE):
-    sent_opportunities.clear()
-    logging.info("Cleared sent opportunities cache.")
+    for user_id in sent_opportunities:
+        sent_opportunities[user_id].clear()
+    logging.info("Cleared sent opportunities cache for all users.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command. Sends a welcome message with a 'Get Started' button."""
@@ -168,7 +169,7 @@ async def send_arbitrage_alerts(context: ContextTypes.DEFAULT_TYPE):
         logging.info("Exchange data not ready yet, skipping arbitrage check.")
         return
     logging.info("Checking for arbitrage opportunities...")
-    opportunities = find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.05)
+    opportunities = find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.005)
     if not opportunities:
         message = "No new arbitrage opportunities at the moment."
     new_opportunities = []
@@ -190,14 +191,30 @@ async def send_arbitrage_alerts(context: ContextTypes.DEFAULT_TYPE):
             )
 
     for user_id in list(subscribed_users):
-        try:
-            if message:
+        # Initialize per-user set if not exists
+        if user_id not in sent_opportunities:
+            sent_opportunities[user_id] = set()
+
+        new_opps_for_user = []
+        for opp in opportunities:
+            key = opportunity_key(opp)
+            if key not in sent_opportunities[user_id]:
+                sent_opportunities[user_id].add(key)
+                new_opps_for_user.append(opp)
+
+        if new_opps_for_user:
+            message = "🔥 New Arbitrage Opportunities found!\n\n"
+            for opp in new_opps_for_user:
+                message += (
+                    f"{opp['symbol']} | Buy {opp['buy_exchange']} at {opp['buy_price']:.6f} | "
+                    f"Sell {opp['sell_exchange']} at {opp['sell_price']:.6f} | "
+                    f"Profit: {opp['profit_pct']:.2f}%\n"
+                )
+            try:
                 await context.bot.send_message(chat_id=user_id, text=message)
                 logging.info(f"Sent arbitrage alert to user {user_id}")
-            else:
-               logging.info(f"The message wasn't sent to {user_id}: no opportunities") 
-        except Exception as e:
-            logging.error(f"Failed to send message to user {user_id}: {e}")
+            except Exception as e:
+                logging.error(f"Failed to send message to user {user_id}: {e}")
 
 
 if __name__ == '__main__':

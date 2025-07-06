@@ -168,7 +168,7 @@ def write_tickers_to_file(tickers, filename="tickers_output.txt"):
 
 
 
-def find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.05):
+def find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.005):
     """
     Find arbitrage opportunities across exchanges for common symbols.
 
