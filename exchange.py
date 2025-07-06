@@ -1,5 +1,6 @@
 import ccxt
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 def init_and_load(name):
     try:
@@ -111,18 +112,32 @@ def get_all_tickers(exchange_objects, batch_size=500):
 
     return all_tickers
 
-def write_common_symbols_to_file(common_symbols, filename="common_symbols.txt"):
+from datetime import datetime
+
+def is_fresh(ticker, max_age_ms=5000):
+    ts = ticker.get("timestamp")
+    if ts is None:
+        return False
+    now = datetime.now(timezone.utc).timestamp() * 1000  # milliseconds
+    return (now - ts) < max_age_ms
+
+def write_tickers_to_file(tickers, filename="tickers_output.txt"):
     with open(filename, "w") as f:
-        for exchange, symbols in common_symbols.items():
-            f.write(f"{exchange.upper()} ({len(symbols)} symbols):\n")
-            for symbol in symbols:
-                f.write(f"  {symbol}\n")
-            f.write("\n")
-    print(f"✅ Saved common symbols to {filename}")
+        for exchange_name, symbol_dict in tickers.items():
+            f.write(f"\n📈 {exchange_name.upper()} Tickers:\n")
+            for symbol, ticker in symbol_dict.items():
+                bid = ticker.get("bid", "N/A")
+                ask = ticker.get("ask", "N/A")
+                last = ticker.get("last", "N/A")
+                ts = ticker.get("datetime") or ticker.get("timestamp") or "N/A"
+                fresh = "✅" if is_fresh(ticker) else "⚠️ stale"
+                f.write(f"{symbol:15} | bid: {bid} | ask: {ask} | last: {last} | time: {ts} | {fresh}\n")
+    print(f"✅ Ticker results written to {filename}")
+
 
 tickers = get_all_tickers(exchange_objects)
 
-write_common_symbols_to_file(common_symbols)
+write_tickers_to_file(tickers)
 
 def fmt(value):
     return f"{value:.8f}" if isinstance(value, (int, float)) else "   ---   "
@@ -134,4 +149,3 @@ for exchange_name, symbol_dict in tickers.items():
         ask = ticker.get('ask')
         last = ticker.get('last')
         print(f"  {symbol:15} | bid: {fmt(bid)} | ask: {fmt(ask)} | last: {fmt(last)}")
-
