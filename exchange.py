@@ -60,6 +60,78 @@ def load(exchange_names):
     # Print results
     for name, symbols in common_symbols.items():
         print(f"{name} has {len(symbols)} common spot symbols: {symbols[:5]} ...")  # Show only first 5 for brevity
+    return exchange_objects, common_symbols
+
+exchange_objects, common_symbols = load(exchange_names)
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from time import sleep
+
+def fetch_exchange_tickers(name, exchange, batch_size=500):
+    tickers = {}
+
+    if not exchange.has.get('fetchTickers'):
+        print(f"⚠️ {name} does not support fetchTickers(), skipping.")
+        return name, tickers
+
+    symbols = common_symbols[name]
+
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            partial = exchange.fetch_tickers(batch)
+            tickers.update(partial)
+        except TypeError:
+            print(f"⚠️ {name} does not support filtered fetchTickers(). Using full fetch once.")
+            try:
+                tickers = exchange.fetch_tickers()
+            except Exception as e:
+                print(f"❌ {name} full fetchTickers() failed: {e}")
+            break
+        except Exception as e:
+            print(f"⚠️ {name} batch {i}-{i+batch_size} failed: {e}")
+            sleep(1)  # optional: pause between batches on error
+
+    return name, tickers
 
 
-load(exchange_names)
+def get_all_tickers(exchange_objects, batch_size=500):
+    all_tickers = {}
+
+    with ThreadPoolExecutor() as executor:
+        futures = {
+            executor.submit(fetch_exchange_tickers, name, exchange, batch_size): name
+            for name, exchange in exchange_objects.items()
+        }
+
+        for future in as_completed(futures):
+            name, tickers = future.result()
+            if tickers:
+                all_tickers[name] = tickers
+
+    return all_tickers
+
+def write_common_symbols_to_file(common_symbols, filename="common_symbols.txt"):
+    with open(filename, "w") as f:
+        for exchange, symbols in common_symbols.items():
+            f.write(f"{exchange.upper()} ({len(symbols)} symbols):\n")
+            for symbol in symbols:
+                f.write(f"  {symbol}\n")
+            f.write("\n")
+    print(f"✅ Saved common symbols to {filename}")
+
+tickers = get_all_tickers(exchange_objects)
+
+write_common_symbols_to_file(common_symbols)
+
+def fmt(value):
+    return f"{value:.8f}" if isinstance(value, (int, float)) else "   ---   "
+
+for exchange_name, symbol_dict in tickers.items():
+    print(f"\n📈 {exchange_name.upper()} Tickers:")
+    for symbol, ticker in list(symbol_dict.items())[:3]:
+        bid = ticker.get('bid')
+        ask = ticker.get('ask')
+        last = ticker.get('last')
+        print(f"  {symbol:15} | bid: {fmt(bid)} | ask: {fmt(ask)} | last: {fmt(last)}")
+
