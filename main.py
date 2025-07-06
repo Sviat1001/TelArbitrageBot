@@ -2,11 +2,25 @@ import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import filters, MessageHandler, ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
-
-# Assuming 'exchange' module contains load_markets and find_arbitrage_opportunities
-# You'll likely need to import other things from 'exchange' if you plan to run
-# the arbitrage finding logic periodically.
+from datetime import datetime, timedelta
 from exchange import load_markets, find_arbitrage_opportunities
+import json
+
+SUBSCRIBERS_FILE = "subscribers.json"
+
+def load_subscribers():
+    if os.path.exists(SUBSCRIBERS_FILE):
+        with open(SUBSCRIBERS_FILE, "r") as f:
+            try:
+                return set(json.load(f))
+            except json.JSONDecodeError:
+                logging.warning("Subscriber file corrupted, starting fresh.")
+                return set()
+    return set()
+
+def save_subscribers():
+    with open(SUBSCRIBERS_FILE, "w") as f:
+        json.dump(list(subscribed_users), f)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -31,6 +45,13 @@ load_env()
 
 # Global set to store subscribed user IDs
 subscribed_users = set()
+subscribed_users = load_subscribers()
+logging.info(f"Loaded {len(subscribed_users)} subscribers from file.")
+
+sent_opportunities = set()
+
+def opportunity_key(opp):
+    return f"{opp['symbol']}:{opp['buy_exchange']}:{opp['sell_exchange']}"
 
 # Initialize exchange data once when the bot starts
 data_ready = False
@@ -40,6 +61,9 @@ exchange_objects, common_symbols = load_markets(exchange_names)
 data_ready = True
 logging.info("Exchange data loaded.")
 
+async def clear_sent_opportunities(context: ContextTypes.DEFAULT_TYPE):
+    sent_opportunities.clear()
+    logging.info("Cleared sent opportunities cache.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the /start command. Sends a welcome message with a 'Get Started' button."""
@@ -78,6 +102,7 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data == "subscribe_button":
         if user_id not in subscribed_users:
             subscribed_users.add(user_id)
+            save_subscribers()
             await query.edit_message_text(
                 text=query.message.text + "\n\n✅ You've been subscribed to arbitrage alerts. "
                                         "I'll start sending you opportunities soon! "
@@ -94,6 +119,7 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data == "resubscribe_button":
         if user_id not in subscribed_users:
             subscribed_users.add(user_id)
+            save_subscribers()
             await context.bot.send_message(
                 chat_id=user_id,
                 text="✅ Welcome back! You've been resubscribed to arbitrage alerts. "
@@ -116,6 +142,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     if user_id in subscribed_users:
         subscribed_users.discard(user_id)
+        save_subscribers()
         keyboard = [[ InlineKeyboardButton("🔄 Resubscribe", callback_data="resubscribe_button")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -142,24 +169,33 @@ async def send_arbitrage_alerts(context: ContextTypes.DEFAULT_TYPE):
         return
     logging.info("Checking for arbitrage opportunities...")
     opportunities = find_arbitrage_opportunities(exchange_objects, common_symbols, threshold=0.05)
+    if not opportunities:
+        message = "No new arbitrage opportunities at the moment."
+    new_opportunities = []
 
-    if opportunities:
-        message = "🔥 Arbitrage Opportunities found!\n\n"
-        for opp in opportunities:
+    for opp in opportunities:
+        key = opportunity_key(opp)
+        if key in sent_opportunities:
+            continue
+        sent_opportunities.add(key)
+        new_opportunities.append(opp)
+
+    if new_opportunities:
+        message = "🔥 New Arbitrage Opportunities found!\n\n"
+        for opp in new_opportunities:
             message += (
                 f"{opp['symbol']} | Buy {opp['buy_exchange']} at {opp['buy_price']:.6f} | "
                 f"Sell {opp['sell_exchange']} at {opp['sell_price']:.6f} | "
                 f"Profit: {opp['profit_pct']:.2f}%\n"
             )
-        logging.info(f"Found {len(opportunities)} opportunities.")
-    else:
-        message = "No significant arbitrage opportunities found at the moment."
-        logging.info("No arbitrage opportunities found.")
 
     for user_id in list(subscribed_users):
         try:
-            await context.bot.send_message(chat_id=user_id, text=message)
-            logging.info(f"Sent arbitrage alert to user {user_id}")
+            if message:
+                await context.bot.send_message(chat_id=user_id, text=message)
+                logging.info(f"Sent arbitrage alert to user {user_id}")
+            else:
+               logging.info(f"The message wasn't sent to {user_id}: no opportunities") 
         except Exception as e:
             logging.error(f"Failed to send message to user {user_id}: {e}")
 
@@ -180,5 +216,6 @@ if __name__ == '__main__':
 
     job_queue = application.job_queue
     job_queue.run_repeating(send_arbitrage_alerts, interval=10, first=5)
+    job_queue.run_repeating(clear_sent_opportunities, interval=3600, first=3600)
     logging.info("Bot started polling...")
     application.run_polling()
